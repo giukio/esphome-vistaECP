@@ -4,7 +4,7 @@
  //for documentation see project at https://github.com/Dilbert66/esphome-vistaecp
 
 #define KP_ADDR 17 //only used as a default if not set in the yaml
-#define MAX_ZONES 48
+#define MAX_ZONES 80
 #define MAX_PARTITIONS 3  
 #define DEFAULTPARTITION 1
 
@@ -62,12 +62,12 @@ namespace esphome {
     //lookups for determining zone status as strings
     
     
-    const char * FAULT = "FAULT";    
+    const char * FAULT = "APERT";    
     const char * BYPAS = "BYPAS";
     const char * ALARM = "ALARM";
     const char * FIRE = "FIRE";
     const char * CHECK = "CHECK";
-    const char * HITSTAR = "Hit *";      
+    const char * HITSTAR = " * Per";      
     
     /*
     //alternative lookups as character arrays
