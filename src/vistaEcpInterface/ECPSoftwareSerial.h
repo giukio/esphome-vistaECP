@@ -22,8 +22,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 Modified for 4800 8E2 
 */
 
-#ifndef SoftwareSerial_h
-#define SoftwareSerial_h
+#ifndef ECPSoftwareSerial_h
+#define ECPSoftwareSerial_h
 
 #include <inttypes.h>
 
@@ -33,9 +33,10 @@ Modified for 4800 8E2
 
 #include <atomic>
 
-#ifdef ESP32
-#define ICACHE_RAM_ATTR IRAM_ATTR
+#if defined( ESP32) && not defined(IRAM_ATTR)
+#define IRAM_ATTR IRAM_ATTR
 #endif
+
 
 // If only one tx or rx wanted then use this as parameter for the unused pin
 constexpr int SW_SERIAL_UNUSED_PIN = -1;
@@ -90,6 +91,7 @@ class SoftwareSerial: public Stream {
     void enableRx(bool on);
     // One wire control
     void enableTx(bool on);
+    uint8_t checkParity(uint8_t b);
 
     static void rxRead(SoftwareSerial * self);
     

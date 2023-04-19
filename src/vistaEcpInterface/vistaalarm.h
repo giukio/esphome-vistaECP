@@ -1,10 +1,22 @@
+#ifndef _vistaalarm_h
+#define _vistaalarm_h
+
+#if !defined(ARDUINO_MQTT)
 #include "esphome.h"
+using namespace esphome;
+#if defined(USE_MQTT)
+#define ESPHOME_MQTT
+#endif
+#endif
 
 #include "vista.h"
+#include <string>
+#include "paneltext.h"
+
  //for documentation see project at https://github.com/Dilbert66/esphome-vistaecp
 
 #define KP_ADDR 17 //only used as a default if not set in the yaml
-#define MAX_ZONES 80
+#define MAX_ZONES 48
 #define MAX_PARTITIONS 3  
 #define DEFAULTPARTITION 1
 
@@ -50,72 +62,36 @@ enum sysState {
   sready,
   sarmed
 };
-namespace esphome {
-  class vistaECPHome: public PollingComponent, public CustomAPIDevice {
-    public: vistaECPHome(char kpaddr = KP_ADDR, int receivePin = RX_PIN, int transmitPin = TX_PIN, int monitorTxPin = MONITOR_PIN): keypadAddr1(kpaddr),
+
+
+#if defined(ESPHOME_MQTT) 
+class vistaECPHome: public CustomMQTTDevice, public RealTimeClock {
+#elif defined(ARDUINO_MQTT)
+class vistaECPHome { 
+#else
+class vistaECPHome: public CustomAPIDevice, public RealTimeClock {
+#endif
+    public: vistaECPHome(char kpaddr = KP_ADDR, int receivePin = RX_PIN, int transmitPin = TX_PIN, int monitorTxPin = MONITOR_PIN,int maxzones=MAX_ZONES,int maxpartitions=MAX_PARTITIONS): 
+    keypadAddr1(kpaddr),
     rxPin(receivePin),
     txPin(transmitPin),
-    monitorPin(monitorTxPin){}
-
-    // start panel language definitions
- 
-    //lookups for determining zone status as strings
+    monitorPin(monitorTxPin),
+    maxZones(maxzones),
+    maxPartitions(maxpartitions)
+    {
+         partitionKeypads = new char[maxPartitions+1];
+         zones=new zoneType[maxZones+1];
+         partitions = new uint8_t[maxPartitions];
+         partitionStates = new partitionStateType[maxPartitions];
+         if (maxZones > 99) {
+             relaySup = new supervisoryType[32];
+             addressSup = new supervisoryType[31];
+         }
+    }
     
-    
-    const char * FAULT = "APERT";    
-    const char * BYPAS = "BYPAS";
-    const char * ALARM = "ALARM";
-    const char * FIRE = "FIRE";
-    const char * CHECK = "CHECK";
-    const char * HITSTAR = " * Per";      
-    
-    /*
-    //alternative lookups as character arrays
-    //find the matching characters in an ascii chart for the messages that your panel sends
-    //for the statuses below. Only need the first few characters plus a zero at the end.
-    //NOTE:  *** do NOT include the zone#. 
-    const char FAULT[6] = {70,65,85,76,84,0}; //"FAULT"
-    const char BYPAS[6] = {66,89,80,65,83,0}; //"BYPASS"
-    const char ALARM[6] = {65,76,65,82,77,0}; //"ALARM"
-    const char FIRE[6]  = {70,73,82,69,32,0}; //"FIRE "
-    const char CHECK[6] = {67,72,69,67,75,0}; //"CHECK"
-    const char HITSTAR[6] = {72,105,116,32,42,0}; //  "Hit *";
-    */
- 
 
- //messages to display to home assistant
-    const char *
-      const STATUS_ARMED = "armed_away";
-    const char *
-      const STATUS_STAY = "armed_home";
-    const char *
-      const STATUS_NIGHT = "armed_night";
-    const char *
-      const STATUS_OFF = "disarmed";
-    const char *
-      const STATUS_ONLINE = "online";
-    const char *
-      const STATUS_OFFLINE = "offline";
-    const char *
-      const STATUS_TRIGGERED = "triggered";
-    const char *
-      const STATUS_READY = "ready";
-    //the default ha alarm panel card likes to see "unavailable" instead of not_ready when the system can't be armed
-    const char *
-      const STATUS_NOT_READY = "unavailable";
-    const char *
-      const MSG_ZONE_BYPASS = "zone_bypass_entered";
-    const char *
-      const MSG_ARMED_BYPASS = "armed_custom_bypass";
-    const char *
-      const MSG_NO_ENTRY_DELAY = "no_entry_delay";
-    const char *
-      const MSG_NONE = "no_messages";
-
-    //end panel language definitions
-
-    std:: function < void(uint8_t, const char *) > zoneStatusChangeCallback;
-    std:: function < void(uint8_t, bool) > zoneStatusChangeBinaryCallback;    
+    std:: function < void(int, const char *) > zoneStatusChangeCallback;
+    std:: function < void(int, bool) > zoneStatusChangeBinaryCallback;    
     std:: function < void(const char * , uint8_t) > systemStatusChangeCallback;
     std:: function < void(sysState, bool, uint8_t) > statusChangeCallback;
     std:: function < void(const char * , uint8_t) > systemMsgChangeCallback;
@@ -123,15 +99,15 @@ namespace esphome {
     std:: function < void(const char * ) > rfMsgChangeCallback;
     std:: function < void(const char * , uint8_t) > line1DisplayCallback;
     std:: function < void(const char * , uint8_t) > line2DisplayCallback;
-    std:: function < void(std::string, uint8_t) > beepsCallback;
-    std:: function < void(std::string) > zoneExtendedStatusCallback;
-    std:: function < void(uint8_t, uint8_t, bool) > relayStatusChangeCallback;
+    std:: function < void(std::string const&, uint8_t) > beepsCallback;
+    std:: function < void(std::string const&) > zoneExtendedStatusCallback;
+    std:: function < void(uint8_t, int, bool) > relayStatusChangeCallback;
 
-    void onZoneStatusChange(std:: function < void(uint8_t zone,
+    void onZoneStatusChange(std:: function < void(int zone,
       const char * msg) > callback) {
       zoneStatusChangeCallback = callback;
     }
-    void onZoneStatusChangeBinarySensor(std:: function < void(uint8_t zone,
+    void onZoneStatusChangeBinarySensor(std:: function < void(int zone,
       bool open) > callback) {
       zoneStatusChangeBinaryCallback = callback;
     }    
@@ -153,44 +129,38 @@ namespace esphome {
     void onLine2DisplayChange(std:: function < void(const char * msg, uint8_t partition) > callback) {
       line2DisplayCallback = callback;
     }
-    void onBeepsChange(std:: function < void(std::string beeps, uint8_t partition) > callback) {
+    void onBeepsChange(std:: function < void(std::string const& beeps, uint8_t partition) > callback) {
       beepsCallback = callback;
     }
-    void onZoneExtendedStatusChange(std:: function < void(std::string zoneExtendedStatus) > callback) {
+    void onZoneExtendedStatusChange(std:: function < void(std::string const& zoneExtendedStatus) > callback) {
       zoneExtendedStatusCallback = callback;
     }
-    void onRelayStatusChange(std:: function < void(uint8_t addr, uint8_t zone, bool state) > callback) {
+    void onRelayStatusChange(std:: function < void(uint8_t addr, int channel, bool state) > callback) {
       relayStatusChangeCallback = callback;
     }
     void onRfMsgChange(std:: function < void(const char * msg) > callback) {
       rfMsgChangeCallback = callback;
     }
     
-    void zoneStatusUpdate(uint8_t zone, const char * msg) {
-      bool open;
-      if (zoneStatusChangeCallback != NULL )
-        zoneStatusChangeCallback(zone,msg);
-
-      std::string openVal=(std::string) msg;
-      if (openVal.find("O")!=std::string::npos) //open. Possible values O,BO,AO
-        open=true;
-      else if (openVal.find("C")!=std::string::npos) //closed. Possible values C,BC,AC
-        open=false;
-      else
-        return;  //alarm/bypass we return without changing sensor. Possible values B,A 
-      if (zoneStatusChangeBinaryCallback != NULL )
-        zoneStatusChangeBinaryCallback(zone,open);
+    void zoneStatusUpdate(int zone) {
+      if (zoneStatusChangeCallback != NULL ) {
+          std::string msg,zs1;          
+          zs1=zones[zone].open?"O":"C";
+          msg = zones[zone].bypass ? "B" : zones[zone].alarm ? "A" : "";
+          zoneStatusChangeCallback(zone,msg.append(zs1).c_str());
+      }
+      
+      if (zoneStatusChangeBinaryCallback != NULL ) 
+        zoneStatusChangeBinaryCallback(zone,zones[zone].open);
     }
 
-
-
     byte debug;
-    char partitionKeypads[MAX_PARTITIONS+1];
     char keypadAddr1;
     int rxPin;
     int txPin;
     int monitorPin;
     const char * accessCode;
+    const char * rfSerialLookup;    
     bool quickArm;
     bool displaySystemMsg = false;
     bool lrrSupervisor,
@@ -204,55 +174,82 @@ namespace esphome {
     relayAddr2,
     relayAddr3,
     relayAddr4;
-    char relayMonitorLow,
-    relayMonitorHigh;
-
+    
+    int maxZones;
+    int maxPartitions;
+    char * partitionKeypads;
+    int defaultPartition=DEFAULTPARTITION;
+    bool forceRefreshGlobal,forceRefreshZones,forceRefresh;
     int TTL = 30000;
 
     long int x;
-    enum zoneState {
-      zopen,
-      zclosed,
-      zbypass,
-      zalarm,
-      zfire,
-      ztrouble
-    };
 
     sysState currentSystemState,
     previousSystemState;
+    
+#if defined(ESPHOME_MQTT)
+const char setalarmcommandtopic[] PROGMEM = "/alarm/set"; 
+#endif
+    
 
     private:
 
-      uint8_t zone;
+    int zone;
     bool sent;
     char p1[18];
     char p2[18];
-    uint8_t partitions[MAX_PARTITIONS];
+
+    uint8_t * partitions;
 
     char msg[50];
 
-    //add zone ttl array.  zone, last seen (millis)
-    struct {
+    struct zoneType {
       unsigned long time;
-      zoneState state;
       uint8_t partition;
-    }
-    zones[MAX_ZONES + 1];
+      uint8_t open:1;
+      uint8_t bypass:1;
+      uint8_t alarm:1;
+      uint8_t check:1;
+      uint8_t fire:1;
+      uint8_t panic:1;
+    };
+    
+    struct supervisoryType {
+        bool check;
+        unsigned long time;
+      
+    };
+    struct {
+        uint8_t bell:1;
+        uint8_t wrx1:1;
+        uint8_t wrx2:1;
+        uint8_t loop:1;
+        uint8_t duress:1;
+        uint8_t panic1:1;
+        uint8_t panic2:1;
+        uint8_t panic3:1;
+    } otherSup;
+        
 
+public:
+    zoneType * zones;
+    
+private:    
     unsigned long lowBatteryTime;
+    supervisoryType * relaySup;
+    supervisoryType * addressSup;
 
     struct alarmStatusType {
       unsigned long time;
       bool state;
-      uint8_t zone;
+      int zone;
       char prompt[17];
     };
 
     struct lrrType {
       int code;
       uint8_t qual;
-      uint8_t zone;
+      int zone;
       uint8_t user;
     };
 
@@ -281,17 +278,20 @@ namespace esphome {
       zone_t
     };
 
-    struct {
+    struct partitionStateType {
       sysState previousSystemState;
       lightStates previousLightState;
-      std::string lastp1;
-      std::string lastp2;
+      std::string lastp1=" ";
+      std::string lastp2=" ";
       int lastbeeps;
       bool refreshStatus;
       bool refreshLights;
-    }
-    partitionStates[MAX_PARTITIONS];
-
+    } ;
+    
+public:
+    partitionStateType * partitionStates;
+    
+private:
     std::string previousMsg,
     previousZoneStatusMsg;
 
@@ -300,33 +300,114 @@ namespace esphome {
     alarmStatus;
     lrrType lrr,
     previousLrr;
+    uint8_t partitionTargets;
     unsigned long sendWaitTime;
     bool firstRun;
+    
+    struct serialType {
+       int zone;
+       int mask;
+    };
 
-    void setExpStates() {
-      int zs = id(zoneStates);
-      zs = zs >> 8; //skip first 8 zones
-      for (int z = 9; z <= MAX_ZONES; z++) {
-        if (zs & 1)
-          vista.setExpFault(z, true);
-        zs = zs >> 1;
+
+serialType getRfSerialLookup(char * serialCode) { 
+
+  serialType rf;
+  rf.zone=0;
+  if (rfSerialLookup && *rfSerialLookup) {
+    std::string serial=serialCode;      
+    std::string token,token1, token2, token3;      
+    std::string s = rfSerialLookup;
+
+    size_t pos, pos1,pos2;
+    s.append(",");
+    while ((pos = s.find(',')) != std::string::npos) {
+      token = s.substr(0, pos); 
+      pos1 = token.find(':');
+      pos2=token.find(':',pos1+1); 
+      token1 = token.substr(0, pos1); //serial
+      if (pos2 != std::string::npos)  {     
+        token2 = token.substr(pos1 + 1,pos2-pos1-1); //zone
+        token3 = token.substr(pos2+1);    //mask
+      } else {
+        token2 = token.substr(pos1 + 1);
+        token3 = "";
+          
       }
+      if (token1 == serial) {
+        rf.zone=toInt(token2,10);
+        if (token3!="")
+            rf.mask=toInt(token3,16);
+        else
+            rf.mask=0x80;
+        break;
+      }
+      s.erase(0, pos + 1); /* erase() function store the current positon and move to next token. */
     }
+  }
+  return rf;
+}   
 
-    void setup() override {
 
+#if defined(ESPHOME_MQTT) 
+    void on_json_message(const std::string &topic, JsonObject payload) {
+    int p=0;
+
+      if (topic.find(String(FPSTR(setalarmcommandtopic)).c_str())!=std::string::npos) { 
+        if (payload.containsKey("partition"))
+          p=payload["partition"];
+      
+        if (payload.containsKey("state") )  {
+            const char *c="";             
+            if (payload.containsKey("code"))
+                c=payload["code"];
+            std::string code=c;
+            std::string s=payload["state"];  
+            set_alarm_state(s,code,p); 
+        } else if (payload.containsKey("keys")) {
+            std::string s=payload["keys"]; 
+            alarm_keypress_partition(s,p);
+        } else if (payload.containsKey("fault") && payload.containsKey("zone")) {
+            bool b=false;
+            std::string s1= (const char*) payload["fault"];
+            if (s1=="ON" || s1=="on" || s1=="1")
+                b=true;
+            std::string s=payload["zone"];
+            p=toInt(s,10);
+           // ESP_LOGD("info","set zone fault %s,%s,%d,%d",s2.c_str(),c,b,p);            
+            set_zone_fault(p,b);
+
+        }
+        
+      } 
+      
+  }
+#endif
+ public:
+#if defined(ARDUINO_MQTT)
+void begin() {
+#else
+void setup() override {
+#endif 
       //use a pollingcomponent and change the default polling interval from 16ms to 8ms to enable
       // the system to not miss a response window on commands.  
+#if !defined(ARDUINO_MQTT)     
       set_update_interval(8); //set looptime to 8ms 
+#endif     
+
+#if defined(ESPHOME_MQTT)
+
+   topic_prefix = mqtt_mqttclientcomponent->get_topic_prefix();
+   topic="homeassistant/alarm_control_panel/"+ topic_prefix + "/config"; 
+   subscribe_json(topic_prefix + String(FPSTR(setalarmcommandtopic)).c_str(),&vistaECPHome::on_json_message);   
+   
+#elif !defined(ARDUINO_MQTT)
       register_service( & vistaECPHome::alarm_keypress, "alarm_keypress", {
         "keys"
       });
       register_service( & vistaECPHome::alarm_keypress_partition, "alarm_keypress_partition", {
         "keys","partition"
       });      
-     // register_service( & vistaECPHome::set_keypad_address, "set_keypad_address", {
-      //  "addr"
-     // });
       register_service( & vistaECPHome::alarm_disarm, "alarm_disarm", {
         "code","partition"
       });
@@ -343,45 +424,24 @@ namespace esphome {
         "zone",
         "fault"
       });
+      
+#endif      
       systemStatusChangeCallback(STATUS_ONLINE, 1);
       statusChangeCallback(sac, true, 1);
       vista.begin(rxPin, txPin, keypadAddr1, monitorPin);
 
-      //retrieve zone status from saved persistent global storage to keep state accross reboots
-      //disabled for now.  Just reset all zones to closed.
-     // int zs = id(zoneStates);
-     // int zb = id(zoneBypass);
-     // int za = id(zoneAlarms);
-      for (int x = 1; x < MAX_ZONES + 1; x++) {
-        std::string s = "C";
-        zoneState z = zclosed;
-        /*
-        if (zs & 1) {
-          zones[x].state = zopen;
-          s = "O";
-          //z = zopen;
-        }
 
-        if (zb & 1) {
-          zones[x].state = zbypass;
-          s = "B";
-        //  z = zbypass;
-        }
-
-        if (za & 1) {
-          zones[x].state = zalarm;
-          s = "A";
-         // z = zalarm;
-        }
-*/
-        zoneStatusUpdate(x, s.c_str());
+      for (uint8_t x = 1; x <= maxZones; x++) {
+        zones[x].open = false;
+        zones[x].alarm=false;
+        zones[x].bypass=false;
+        zones[x].fire=false; 
+        zones[x].panic=false; 
+        zoneStatusUpdate(x);
         zones[x].time = millis();
-        zones[x].state = z;
-       // zs >>= 1;
-       // zb >>= 1;
-       // za >>= 1;
-      }
 
+      }
+      
       firstRun = true;
 
       vista.lrrSupervisor = lrrSupervisor; //if we don't have a monitoring lrr supervisor we emulate one if set to true
@@ -397,7 +457,7 @@ namespace esphome {
       vista.zoneExpanders[7].expansionAddr = relayAddr3;
       vista.zoneExpanders[8].expansionAddr = relayAddr4;
       
-      setDefaultKpAddr(DEFAULTPARTITION);
+      setDefaultKpAddr(defaultPartition);
     }
 
     void alarm_disarm(std::string code,int partition) {
@@ -448,14 +508,20 @@ namespace esphome {
     }
     
     void alarm_keypress(std::string keystring) {
-        alarm_keypress_partition(keystring,DEFAULTPARTITION);
+         
+        alarm_keypress_partition(keystring,defaultPartition);
     }    
 
-    void alarm_keypress_partition(std::string keystring, int partition=DEFAULTPARTITION) {
+    void alarm_keypress_partition(std::string keystring, int partition) {
       const char * keys = strcpy(new char[keystring.length() + 1], keystring.c_str());
-      if (debug > 0) ESP_LOGD("Debug", "Writing keys: %s to partition %d", keystring.c_str(),partition);
+      if (debug > 0)
+          #if defined(ARDUINO_MQTT)
+          Serial.printf("Writing keys: %s to partition %d\n", keystring.c_str(),partition);      
+          #else
+          ESP_LOGD("Debug", "Writing keys: %s to partition %d", keystring.c_str(),partition);
+          #endif
       uint8_t addr=0;
-      if (partition > MAX_PARTITIONS || partition < 1) return;
+      if (partition > maxPartitions || partition < 1) return;
       addr=partitionKeypads[partition];
       if (addr > 0 and addr < 24)      
         vista.write(keys,addr);
@@ -463,12 +529,12 @@ namespace esphome {
     
     void setDefaultKpAddr(uint8_t p) {
     uint8_t a;
-      if (p > MAX_PARTITIONS || p < 1) return;
+      if (p > maxPartitions || p < 1) return;
       a=partitionKeypads[p];
       if (a > 15 && a < 24) 
         vista.setKpAddr(a);
     } 
-
+private:
     bool isInt(std::string s, int base) {
       if (s.empty() || std::isspace(s[0])) return false;
       char * p;
@@ -482,6 +548,8 @@ namespace esphome {
       long int li = strtol(s.c_str(), & p, base);
       return li;
     }
+    
+ 
 
     bool areEqual(char * a1, char * a2, uint8_t len) {
       for (int x = 0; x < len; x++) {
@@ -489,19 +557,72 @@ namespace esphome {
       }
       return true;
     }
-
-    void printPacket(const char * label, char cbuf[], int len) {
-
-      std::string s;
-      char s1[4];
-      for (int c = 0; c < len; c++) {
-        sprintf(s1, "%02X ", cbuf[c]);
-        s.append(s1);
-      }
-      ESP_LOGI(label, "%s", s.c_str());
-
-    }
     
+    
+    
+     bool promptContains(char * p1, const char * msg, uint8_t & zone) {
+            int x,y;
+            for (x=0;x<strlen(msg);x++) {
+                 if (p1[x]!=msg[x]) return false;
+            } 
+            if (p1[x] !=0x20 || !(x< 17 && p1[x+1] > 0x2f && p1[x+1] < 0x3a)) return false;
+
+          #if defined(ARDUINO_MQTT)
+          if (debug >1)
+            Serial.printf("The prompt  %s was matched\n",msg);         
+          #else   
+           if (debug > 1)              
+            ESP_LOGD("debug","The prompt  %s was matched",msg);   
+        #endif        
+            if (maxZones > 99) {
+              char s[3]; 
+              x++;
+              for (y=0;y<3;y++) {
+                if (p1[y+x] > 0x2F && p1[y+x] < 0x3A) 
+                    s[y]=p1[y+x];
+                if (p1[y+x]==0x20 && y>0) {
+                  s[y]=0;
+                  int z=toInt(s,10);
+                  if ( z > vista.statusFlags.zone && z<=maxZones ) vista.statusFlags.zone=z;
+                  zone=z;
+                  if (debug > 2) 
+          #if defined(ARDUINO_MQTT)
+                      Serial.printf("The zone match is: %d\n",z);       
+          #else                       
+                      ESP_LOGD("test","The zone match is: %d ",z); 
+          #endif
+
+  
+                }
+              }
+            }
+            return true;
+
+     }
+
+  void printPacket(const char * label, char cbuf[], int len) {
+    char s1[4];
+
+    std::string s="";      
+      
+    #if !defined(ARDUINO_MQTT) 
+    char s2[25];    
+    ESPTime rtc=now();
+    sprintf(s2,"%02d-%02d-%02d %02d:%02d ",rtc.year,rtc.month,rtc.day_of_month,rtc.hour,rtc.minute);
+    #endif
+    for (int c = 0; c < len; c++) {
+      sprintf(s1, "%02X ", cbuf[c]);
+      s=s.append(s1);
+    }
+    #if defined(ARDUINO_MQTT)
+    Serial.printf("%s: %s\n",label, s.c_str());    
+    #else 
+    ESP_LOGI(label, "%s %s",s2, s.c_str());
+    #endif
+
+  }
+
+   
     std::string getF7Lookup(char cbuf[]) {
 
         std::string s="{";
@@ -514,13 +635,13 @@ namespace esphome {
         return s;
 
     }  
-
-    void set_alarm_state(std::string state, std::string code = "",int partition=DEFAULTPARTITION) {
+public:
+    void set_alarm_state(std::string const& state, std::string code = "",int partition=DEFAULTPARTITION) {
 
       if (code.length() != 4 || !isInt(code, 10)) code = accessCode; // ensure we get a numeric 4 digit code
  
       uint8_t addr=0;
-      if (partition > MAX_PARTITIONS || partition < 1) return;
+      if (partition > maxPartitions || partition < 1) return;
       addr=partitionKeypads[partition];
       if (addr < 1 || addr > 23) return;          
 
@@ -534,7 +655,7 @@ namespace esphome {
         }
       }
       // Arm away
-      else if (state.compare("A") == 0 && !partitionStates[partition-1].previousLightState.armed) {
+      else if ((state.compare("A") == 0 || state.compare("W") == 0) && !partitionStates[partition-1].previousLightState.armed) {
 
         if (quickArm)
           vista.write("#2",addr);
@@ -574,39 +695,8 @@ namespace esphome {
         }
       }
     }
-
-    //This stores the current zone states in persistant storage in case of reboots
-    void setGlobalState(uint8_t zone, zoneState state) {
-
-      id(zoneStates) = id(zoneStates) & (int)((0x01 << (zone - 1)) ^ 0xFFFFFFFF); //clear global storage value 
-      id(zoneAlarms) = id(zoneAlarms) & (int)((0x01 << (zone - 1)) ^ 0xFFFFFFFF);
-      id(zoneBypass) = id(zoneBypass) & (int)((0x01 << (zone - 1)) ^ 0xFFFFFFFF);
-      id(zoneChecks) = id(zoneChecks) & (int)((0x01 << (zone - 1)) ^ 0xFFFFFFFF);
-
-      switch (state) {
-      case zopen:
-        id(zoneStates) = id(zoneStates) | (0x01 << (zone - 1)); //set global storage value bit for zone
-        break;
-      case zbypass:
-        id(zoneBypass) = id(zoneBypass) | (0x01 << (zone - 1));
-        id(zoneStates) = id(zoneStates) | (0x01 << (zone - 1));
-        break;
-      case zalarm:
-        id(zoneAlarms) = id(zoneAlarms) | (0x01 << (zone - 1));
-        id(zoneStates) = id(zoneStates) | (0x01 << (zone - 1));
-        break;
-      case ztrouble:
-        id(zoneChecks) = id(zoneChecks) | (0x01 << (zone - 1));
-        break;
-      case zclosed: //closed means no flags set
-        break;
-      default:
-        break;
-
-      }
-    }
-
-    uint8_t getZoneFromChannel(uint8_t deviceAddress, uint8_t channel) {
+private:
+    int getZoneFromChannel(uint8_t deviceAddress, uint8_t channel) {
 
       switch (deviceAddress) {
       case 7:
@@ -639,7 +729,7 @@ namespace esphome {
         }
     }
 
-    void assignPartitionToZone(uint8_t zone) {
+    void assignPartitionToZone(int zone) {
         for (int p=1;p<4;p++) {
             if (partitions[p-1]) {
                 zones[zone].partition=p-1;
@@ -650,34 +740,47 @@ namespace esphome {
     }
 
 
-
-
     void getPartitionsFromMask() {
-      memset(partitions, 0, sizeof(partitions));
-        for (uint8_t p=1;p <= MAX_PARTITIONS;p++) {
-            //for (int8_t i=3;i>=0;i--) {
-                int8_t i=2; //for now only accept virtual addresses in range 16-23
+      partitionTargets=0;
+      memset(partitions, 0,maxPartitions);
+        for (uint8_t p=1;p <= maxPartitions;p++) {
+            for (int8_t i=3;i>=0;i--) {
                 int8_t shift=partitionKeypads[p]-(8*i);
                 if (shift > 0 && (vista.statusFlags.keypad[i] & (0x01 << shift))) {
+                    partitionTargets=partitionTargets+1;
                     partitions[p-1] = 1;
-                   // break;
+                    break;
                 }
-            //}
+            }
       }
     }
 
-    void update() override {
+public:
+#if defined(ARDUINO_MQTT)
+void loop()  {
+#else   
+void update() override {
+#endif 
+        
        static unsigned long refreshFlagsTime;
-       if (!firstRun && vista.keybusConnected && millis() - refreshFlagsTime > 60000  && !vista.statusFlags.programMode) {
+       if ((!firstRun && vista.keybusConnected && millis() - refreshFlagsTime > 60000  && !vista.statusFlags.programMode) || forceRefreshGlobal) {
+              forceRefreshZones=true;
+              forceRefreshGlobal=false;
               refreshFlagsTime=millis();
-              for (uint8_t partition = 1; partition < 4; partition++) {
+              for (uint8_t partition = 1; partition <= maxPartitions; partition++) {
                    partitionStates[partition-1].refreshStatus=true;
                    partitionStates[partition-1].refreshLights=true;
                    
 
              }
-             
+           
       }
+    
+      #if defined(ESPHOME_MQTT)
+        if (firstRun) {
+         publish(topic,"{\"name\":" +  topic_prefix + "alarm panel, \"cmd_t\":" +  topic_prefix + String(FPSTR(setalarmcommandtopic)).c_str() + "}",0,1);
+        }
+      #endif   
 
       //if data to be sent, we ensure we process it quickly to avoid delays with the F6 cmd
       sendWaitTime = millis();
@@ -690,8 +793,7 @@ namespace esphome {
 
       if (vista.keybusConnected && vh) {
 
-        if (firstRun) setExpStates(); //restore expander states from persistent storage        
-        if (debug > 0 && vista.cbuf[0] && !vista.newExtCmd) {
+            if (debug > 0 && vista.cbuf[0] && !vista.newExtCmd) {
              printPacket("CMD", vista.cbuf, 13);
         }
         static unsigned long refreshLrrTime,refreshRfTime;
@@ -703,72 +805,70 @@ namespace esphome {
           //format: [0xFA] [deviceid] [subcommand] [channel/zone] [on/off] [relaydata]
 
           if (vista.extcmd[0] == 0xFA) {
-            uint8_t z = vista.extcmd[3];
-            zoneState zs;
-            if (vista.extcmd[2] == 0xf1 && z > 0 && z <= MAX_ZONES) { // we have a zone status (zone expander address range)
-              zs = vista.extcmd[4] ? zopen : zclosed;
-              std::string zone_state1 = zs == zopen ? "O" : "C";
-              std::string zone_state2 = zones[z].state == zbypass ? "B" : zones[z].state == zalarm ? "A" : "";
-              if (zones[z].state != zbypass && zones[z].state != zalarm) {
+            int z = vista.extcmd[3];
+            if (vista.extcmd[2] == 0xf1 && z > 0 && z <= maxZones) { // we have a zone status (zone expander address range)
                 zones[z].time = millis();
-                zones[z].state = zs;
-              }
-              zoneStatusUpdate(z, (zone_state2.append(zone_state1)).c_str());
-
+                zones[z].open = vista.extcmd[4];
+                zoneStatusUpdate(z);
+          
             } else if (vista.extcmd[2] == 0x00) { //relay update z = 1 to 4
               if (z > 0) {
                 relayStatusChangeCallback(vista.extcmd[1], z, vista.extcmd[4] ? true : false);
-                if (vista.extcmd[1] == relayMonitorLow) {
-                  std::string zone_state1 = vista.extcmd[4] ? "O" : "C";
-                  std::string zone_state2 = zones[z].state == zbypass ? "B" : zones[z].state == zalarm ? "A" : "";
-                  zoneStatusUpdate(z, (zone_state2.append(zone_state1)).c_str());
-                } else if (vista.extcmd[1] == relayMonitorHigh) {
-                  std::string zone_state1 = vista.extcmd[4] ? "O" : "C";
-                  std::string zone_state2 = zones[z + 4].state == zbypass ? "B" : zones[z].state == zalarm ? "A" : "";
-                  zoneStatusUpdate(z + 4, (zone_state2.append(zone_state1)).c_str());
-
-                }
                 if (debug > 0)
+          #if defined(ARDUINO_MQTT)
+                  Serial.printf("Got relay address %d channel %d = %d\n", vista.extcmd[1], z, vista.extcmd[4]);      
+          #else                    
                   ESP_LOGD("debug", "Got relay address %d channel %d = %d", vista.extcmd[1], z, vista.extcmd[4]);
+          #endif
               }
             } else if (vista.extcmd[2] == 0x0d) { //relay update z = 1 to 4 - 1sec on / 1 sec off
               if (z > 0) {
                 // relayStatusChangeCallback(vista.extcmd[1],z,vista.extcmd[4]?true:false);
                 if (debug > 0)
+          #if defined(ARDUINO_MQTT)
+                 Serial.printf("Got relay address %d channel %d = %d. Cmd 0D. Pulsing 1sec on/ 1sec off\n", vista.extcmd[1], z, vista.extcmd[4]);      
+          #else                    
                   ESP_LOGD("debug", "Got relay address %d channel %d = %d. Cmd 0D. Pulsing 1sec on/ 1sec off", vista.extcmd[1], z, vista.extcmd[4]);
+          #endif
               }
             } else if (vista.extcmd[2] == 0xf7) { //30 second zone expander module status update
               uint8_t faults = vista.extcmd[4];
-
               for (int x = 8; x > 0; x--) {
                 z = getZoneFromChannel(vista.extcmd[1], x); //device id=extcmd[1]
                 if (!z) continue;
-                zs = faults & 1 ? zopen : zclosed; //check first bit . lower bit = channel 8. High bit= channel 1
+                bool zs = faults & 1 ?true : false; //check first bit . lower bit = channel 8. High bit= channel 1
                 faults = faults >> 1; //get next zone status bit from field
-                //only update status for zones that are not alarmed or bypassed
-                if (zones[z].state != zbypass && zones[z].state != zalarm) {
-                  if (zones[z].state != zs) {
-                    if (zs == zopen)
-                      zoneStatusUpdate(z, "O");
-                    else
-                      zoneStatusUpdate(z, "C");
+
+                  if (zones[z].open != zs) {
+                      zones[z].open = zs;                      
+                      zoneStatusUpdate(z);
                   }
                   zones[z].time = millis();
-                  zones[z].state = zs;
-                  setGlobalState(z, zs);
-                }
-
               }
- 
- 
             }
           } else if (vista.extcmd[0] == 0xFB && vista.extcmd[1] == 4) {
               
             char rf_serial_char[14];
+            char rf_serial_char_out[20];            
             //FB 04 06 18 98 B0 00 00 00 00 00 00 
             uint32_t device_serial = (vista.extcmd[2] << 16) + (vista.extcmd[3] << 8) + vista.extcmd[4];
-            sprintf(rf_serial_char, "%03d%04d,%02X", device_serial / 10000, device_serial % 10000, vista.extcmd[5]);
-            if (debug > 0) ESP_LOGD("info", "RFX: %s", rf_serial_char);
+            sprintf(rf_serial_char, "%03d%04d", device_serial / 10000, device_serial % 10000);
+            serialType rf=getRfSerialLookup(rf_serial_char);
+            int z=rf.zone;            
+
+            if (debug > 0) {
+          #if defined(ARDUINO_MQTT)
+                Serial.printf("RFX: %s,%02x\n", rf_serial_char,vista.extcmd[5]);          
+          #else                
+                ESP_LOGI("info", "RFX: %s,%02x", rf_serial_char,vista.extcmd[5]);
+          #endif
+            }   
+            if (z && !(vista.extcmd[5]&0x04)) {
+                zones[z].time = millis();
+                zones[z].open = vista.extcmd[5]&rf.mask?true:false;
+                zoneStatusUpdate(z);
+              }
+            sprintf(rf_serial_char_out,"%s,%02x",rf_serial_char,vista.extcmd[5]);
             rfMsgChangeCallback(rf_serial_char);
             refreshRfTime = millis();
 
@@ -787,7 +887,8 @@ namespace esphome {
           */
 
         }
-
+        p1[0]='\0';
+        p2[0]='\0';
         if (vista.cbuf[0] == 0xf7 && vista.newCmd) {
           getPartitionsFromMask();
           /*test code
@@ -802,21 +903,27 @@ namespace esphome {
           p1[16] = '\0';
           p2[16] = '\0';
 
-          for (uint8_t partition = 1; partition <= MAX_PARTITIONS; partition++) {
-            if (partitions[partition - 1]) {
-              bool forceRefresh=partitionStates[partition - 1].refreshStatus;                
+          for (uint8_t partition = 1; partition <= maxPartitions; partition++) {
+            if (partitions[partition - 1] ) {
+               forceRefresh=partitionStates[partition - 1].refreshStatus ;
+          #if defined(ARDUINO_MQTT)
+              Serial.printf("Display to partition: %02X\n", partition);          
+          #else              
               ESP_LOGI("INFO", "Display to partition: %02X", partition);
-              if (partitionStates[partition - 1].lastp1 != p1)
+          #endif
+              if (partitionStates[partition - 1].lastp1 != p1 || forceRefresh)
                 line1DisplayCallback(p1, partition);
-              if (partitionStates[partition - 1].lastp2 != p2)
+              if (partitionStates[partition - 1].lastp2 != p2 || forceRefresh)
                 line2DisplayCallback(p2, partition);
               if (partitionStates[partition - 1].lastbeeps != vista.statusFlags.beeps || forceRefresh ) {
-                beepsCallback(to_string(vista.statusFlags.beeps), partition);
+               char s[4];  
+               itoa(vista.statusFlags.beeps,s,10);
+                beepsCallback(s, partition);
               }
               partitionStates[partition - 1].lastp1 = p1;
               partitionStates[partition - 1].lastp2 = p2;
               partitionStates[partition - 1].lastbeeps = vista.statusFlags.beeps;
-              
+
              if (strstr(vista.statusFlags.prompt, HITSTAR))
                 alarm_keypress_partition("*",partition);
             }
@@ -824,25 +931,26 @@ namespace esphome {
           std::string s="";
         //  if (!vista.statusFlags.systemFlag)
           //  s=getF7Lookup(vista.cbuf);
-          
+          #if defined(ARDUINO_MQTT)
+          Serial.printf("Prompt: %s %s\n", p1,s.c_str());
+          Serial.printf("Prompt: %s\n", p2);
+          Serial.printf("Beeps: %d\n", vista.statusFlags.beeps);          
+          #else    
           ESP_LOGI("INFO", "Prompt: %s %s", p1,s.c_str());
           ESP_LOGI("INFO", "Prompt: %s", p2);
           ESP_LOGI("INFO", "Beeps: %d\n", vista.statusFlags.beeps);
+          #endif
         }
 
 
         //publishes lrr status messages
         if ((vista.cbuf[0] == 0xf9 && vista.cbuf[3] == 0x58 && vista.newCmd) || firstRun) { //we show all lrr messages with type 58
           int c, q, z;
-          if (firstRun) { //retrieve from persistant storage
-            c = id(lrrCode) >> 16;
-            q = id(lrrCode) & 0x0F;
-            z = (id(lrrCode) >> 8) & 0xFF;
-          } else {
+
             c = vista.statusFlags.lrr.code;
             q = vista.statusFlags.lrr.qual;
             z = vista.statusFlags.lrr.zone;
-          }
+
 
           std::string qual;
           if (c < 400)
@@ -860,7 +968,7 @@ namespace esphome {
               uf = "zone";
             sprintf(msg, "%d: %s %s %d%s", c, & lrrString[1], uf.c_str(), z, qual.c_str());
             lrrMsgChangeCallback(msg);
-            id(lrrCode) = (c << 16) | (z << 8) | q; //store in persistant global storage
+           // id(lrrCode) = (c << 16) | (z << 8) | q; //store in persistant global storage
             refreshLrrTime = millis();
           }
 
@@ -869,7 +977,7 @@ namespace esphome {
         vista.newCmd = false;
 
         // we also return if it's not an f7, f9 or f2
-        if (!(vista.cbuf[0] == 0xf7 || vista.cbuf[0] == 0xf9 || vista.cbuf[0] == 0xf2)) return;
+        if (!(vista.cbuf[0] == 0xf7 || vista.cbuf[0] == 0xf9 || vista.cbuf[0] == 0xf2) || vista.cbuf[12]==0x77) return;
 
         currentSystemState = sunavailable;
         currentLightState.stay = false;
@@ -883,7 +991,7 @@ namespace esphome {
        // currentLightState.trouble = false;  
         currentLightState.bypass = false; 
         currentLightState.chime = false; 
-
+        
         //armed status lights
         if (vista.statusFlags.systemFlag && (vista.statusFlags.armedAway || vista.statusFlags.armedStay)) {
           if (vista.statusFlags.night) {
@@ -904,16 +1012,7 @@ namespace esphome {
         if (vista.statusFlags.ready) {
           currentSystemState = sdisarmed;
           currentLightState.ready = true;
-          /*
-          for (int x = 1; x < MAX_ZONES + 1; x++) {
-              if ((zones[x].state != zbypass && zones[x].state != zclosed) || (zones[x].state == zbypass && !vista.statusFlags.bypass)) {
-                  zoneStatusUpdate(x, "C");
-                  zones[x].state = zclosed;
-                  setGlobalState(x, zclosed); //save to persistent storage
 
-              }
-          }
-          */
         }
         //system armed prompt type
         /*
@@ -925,20 +1024,22 @@ namespace esphome {
         }
         */
         //zone fire status
-        if (strstr(p1, FIRE) && !vista.statusFlags.systemFlag) {
+        uint8_t tz;
+        if (promptContains(p1,FIRE,tz) && !vista.statusFlags.systemFlag) {
           fireStatus.zone = vista.statusFlags.zone;
           fireStatus.time = millis();
           fireStatus.state = true;
-          //strncpy(fireStatus.prompt, p1, 17);
+          zones[vista.statusFlags.zone].fire=true;          
         }
         //zone alarm status 
-        if (strstr(p1, ALARM) && !vista.statusFlags.systemFlag) {
-          if (vista.statusFlags.zone <= MAX_ZONES) {
-            if (zones[vista.statusFlags.zone].state != zalarm)
-              zoneStatusUpdate(vista.statusFlags.zone, "A");
+        if (promptContains(p1,ALARM,tz) && !vista.statusFlags.systemFlag) {
+
+          if (vista.statusFlags.zone <= maxZones) {
+            if (!zones[vista.statusFlags.zone].alarm) {
+             zones[vista.statusFlags.zone].alarm=true;
+             zoneStatusUpdate(vista.statusFlags.zone);
+            }
             zones[vista.statusFlags.zone].time = millis();
-            zones[vista.statusFlags.zone].state = zalarm;
-            setGlobalState(vista.statusFlags.zone, zalarm);
             alarmStatus.zone = vista.statusFlags.zone;
             alarmStatus.time = millis();
             alarmStatus.state = true;
@@ -950,33 +1051,35 @@ namespace esphome {
             //strncpy(panicStatus.prompt, p1, 17);
           }
         }
-        //zone check status 
-        if (strstr(p1, CHECK) && !vista.statusFlags.systemFlag) {
-          if (zones[vista.statusFlags.zone].state != ztrouble)
-            zoneStatusUpdate(vista.statusFlags.zone, "T");
-          zones[vista.statusFlags.zone].time = millis();
-          zones[vista.statusFlags.zone].state = ztrouble;
-          setGlobalState(vista.statusFlags.zone, ztrouble);
-        }
+        //device check status 
+        if (promptContains(p1,CHECK,tz) || promptContains(p1,TRBL,tz)) {
+            
+         // if (zones[vista.statusFlags.zone].state != ztrouble)
+           //zoneStatusUpdate(vista.statusFlags.zone, "T");
+          //zones[vista.statusFlags.zone].time = millis();
+          //zones[vista.statusFlags.zone].state = ztrouble;
+
+        } 
         //zone fault status 
-        
-        if (strstr(p1, FAULT) && !vista.statusFlags.systemFlag) {
+        if (promptContains(p1,FAULT,tz) && !vista.statusFlags.systemFlag) {
 
-          if (zones[vista.statusFlags.zone].state != zopen)
-            zoneStatusUpdate(vista.statusFlags.zone, "O");
+          if (!zones[vista.statusFlags.zone].open) {
+           zones[vista.statusFlags.zone].open=true;  
+           zoneStatusUpdate(vista.statusFlags.zone);
+          }
+
           zones[vista.statusFlags.zone].time = millis();
-          zones[vista.statusFlags.zone].state = zopen;
-          setGlobalState(vista.statusFlags.zone, zopen);
 
+ 
         }
         //zone bypass status
-        if (strstr(p1, BYPAS) && !vista.statusFlags.systemFlag) {
-          if (zones[vista.statusFlags.zone].state != zbypass)
-            zoneStatusUpdate(vista.statusFlags.zone, "B");
-          setGlobalState(vista.statusFlags.zone, zbypass);
-          zones[vista.statusFlags.zone].time = millis();
-          zones[vista.statusFlags.zone].state = zbypass;
-          assignPartitionToZone(vista.statusFlags.zone);          
+        if (promptContains(p1,BYPAS,tz) && !vista.statusFlags.systemFlag) {
+          if (!zones[vista.statusFlags.zone].bypass) {
+            zones[vista.statusFlags.zone].bypass=true;              
+            zoneStatusUpdate(vista.statusFlags.zone);
+          }
+             zones[vista.statusFlags.zone].time = millis();
+            assignPartitionToZone(vista.statusFlags.zone);          
         }
 
         //trouble lights 
@@ -984,10 +1087,10 @@ namespace esphome {
           currentLightState.ac = false;
         } else currentLightState.ac = true;
 
-        if (vista.statusFlags.lowBattery ) {
+        if (vista.statusFlags.lowBattery  && vista.statusFlags.systemFlag) {
           currentLightState.bat = true;
           lowBatteryTime = millis();
-        }
+        } 
         // ESP_LOGD("info","ac=%d,batt status = %d,systemflag=%d,lightbat status=%d,trouble=%d", currentLightState.ac,vista.statusFlags.lowBattery,vista.statusFlags.systemFlag,currentLightState.bat,currentLightState.trouble);
 
         if (vista.statusFlags.fire) {
@@ -1027,22 +1130,36 @@ namespace esphome {
         //	}    else  currentLightState.canceled=false;        
 
         //clear alarm statuses  when timer expires
-        if ((millis() - fireStatus.time) > TTL) fireStatus.state = false;
-        if ((millis() - alarmStatus.time) > TTL) alarmStatus.state = false;
-        if ((millis() - panicStatus.time) > TTL) panicStatus.state = false;
+        if ((millis() - fireStatus.time) > TTL) {
+          fireStatus.state = false;          
+          if (fireStatus.zone > 0 && fireStatus.zone <=maxZones)          
+            zones[fireStatus.zone].fire=false;
+        }
+        if ((millis() - alarmStatus.time) > TTL) {
+          alarmStatus.state = false;
+          if (alarmStatus.zone > 0 && alarmStatus.zone <=maxZones)
+            zones[alarmStatus.zone].alarm=false;          
+        }
+        if ((millis() - panicStatus.time) > TTL) {
+          panicStatus.state = false;
+          if (panicStatus.zone > 0 && panicStatus.zone <=maxZones)
+            zones[panicStatus.zone].panic=false;             
+        }
         //  if ((millis() - systemPrompt.time) > TTL) systemPrompt.state = false;
         if ((millis() - lowBatteryTime) > TTL) currentLightState.bat = false;
 
-        if (vista.statusFlags.systemFlag && (!currentLightState.ac || currentLightState.bat) )
+        if  (!currentLightState.ac || currentLightState.bat )
           currentLightState.trouble = true;
         else
           currentLightState.trouble = false;
+        
         currentLightState.alarm = alarmStatus.state;
 
-        for (uint8_t partition = 1; partition <= MAX_PARTITIONS; partition++) {
-          if (partitions[partition - 1]) {
+        for (uint8_t partition = 1; partition <= maxPartitions; partition++) {
+          if ((partitions[partition - 1] && partitionTargets==1)) {
             //system status message
-            bool forceRefresh=partitionStates[partition - 1].refreshStatus;
+            forceRefresh=partitionStates[partition - 1].refreshStatus ;;
+              
             if (currentSystemState != partitionStates[partition - 1].previousSystemState || forceRefresh)
               switch (currentSystemState) {
               case striggered:
@@ -1066,46 +1183,46 @@ namespace esphome {
               default:
                 systemStatusChangeCallback(STATUS_NOT_READY, partition);
               }
-            partitionStates[partition - 1].previousSystemState = currentSystemState;
+             partitionStates[partition - 1].previousSystemState = currentSystemState;
              partitionStates[partition - 1].refreshStatus=false;
           }
         }
         
 
-        for (uint8_t partition = 1; partition <= MAX_PARTITIONS; partition++) {
-          if (partitions[partition - 1]) {
+        for (uint8_t partition = 1; partition <= maxPartitions; partition++) {
+          if ((partitions[partition - 1] && partitionTargets==1) ) {
 
             //publish status on change only - keeps api traffic down
             previousLightState = partitionStates[partition - 1].previousLightState;
-            bool forceRefresh=partitionStates[partition - 1].refreshLights;
+            forceRefresh=partitionStates[partition - 1].refreshLights ;
             
             if (currentLightState.fire != previousLightState.fire || forceRefresh)
               statusChangeCallback(sfire, currentLightState.fire, partition);
             if (currentLightState.alarm != previousLightState.alarm || forceRefresh)
               statusChangeCallback(salarm, currentLightState.alarm, partition);
-            if ((currentLightState.trouble != previousLightState.trouble || forceRefresh) && vista.statusFlags.systemFlag)
+            if ((currentLightState.trouble != previousLightState.trouble || forceRefresh) )
               statusChangeCallback(strouble, currentLightState.trouble, partition);
             if (currentLightState.chime != previousLightState.chime || forceRefresh) 
               statusChangeCallback(schime, currentLightState.chime, partition);
             //if (currentLightState.check != previousLightState.check || forceRefresh) 
             //  statusChangeCallback(scheck, currentLightState.check, partition);          
-            if ((currentLightState.away != previousLightState.away || forceRefresh)  && vista.statusFlags.systemFlag)
+            if (((currentLightState.away != previousLightState.away)  && vista.statusFlags.systemFlag) || forceRefresh)
               statusChangeCallback(sarmedaway, currentLightState.away, partition);
             if (currentLightState.ac != previousLightState.ac || forceRefresh)
               statusChangeCallback(sac, currentLightState.ac, partition);
-            if ((currentLightState.stay != previousLightState.stay || forceRefresh) && vista.statusFlags.systemFlag)
+            if (((currentLightState.stay != previousLightState.stay ) && vista.statusFlags.systemFlag) || forceRefresh)
               statusChangeCallback(sarmedstay, currentLightState.stay, partition);
-            if ((currentLightState.night != previousLightState.night || forceRefresh) && vista.statusFlags.systemFlag)
+            if (((currentLightState.night != previousLightState.night ) && vista.statusFlags.systemFlag) || forceRefresh)
               statusChangeCallback(sarmednight, currentLightState.night, partition);
-            if ((currentLightState.instant != previousLightState.instant || forceRefresh) && vista.statusFlags.systemFlag)
+            if (((currentLightState.instant != previousLightState.instant ) && vista.statusFlags.systemFlag) || forceRefresh)
               statusChangeCallback(sinstant, currentLightState.instant, partition);
-            if ((currentLightState.bat != previousLightState.bat || forceRefresh) )
+            if (currentLightState.bat != previousLightState.bat || forceRefresh  )
               statusChangeCallback(sbat, currentLightState.bat, partition);
             if (currentLightState.bypass != previousLightState.bypass || forceRefresh)
               statusChangeCallback(sbypass, currentLightState.bypass, partition);
             if (currentLightState.ready != previousLightState.ready || forceRefresh)
               statusChangeCallback(sready, currentLightState.ready, partition);
-            if ((currentLightState.armed != previousLightState.armed || forceRefresh) && vista.statusFlags.systemFlag)
+            if (((currentLightState.armed != previousLightState.armed ) && vista.statusFlags.systemFlag) || forceRefresh)
               statusChangeCallback(sarmed, currentLightState.armed, partition);
             //  if (currentLightState.canceled != previousLightState.canceled) 
             //   statusChangeCallback(scanceled,currentLightState.canceled,partition);
@@ -1117,28 +1234,46 @@ namespace esphome {
         }
 
         std::string zoneStatusMsg = "";
-        char s1[7];
+        char s1[16];
         //clears restored zones after timeout
-        for (int x = 1; x < MAX_ZONES + 1; x++) {
-          if (((zones[x].state != zbypass && zones[x].state != zclosed) || (zones[x].state == zbypass && !partitionStates[zones[x].partition].previousLightState.bypass)) && (millis() - zones[x].time) > TTL) {
-            zoneStatusUpdate(x, "C");
-            zones[x].state = zclosed;
-            setGlobalState(x, zclosed);
+        for (int x = 1; x < maxZones + 1; x++) {
+            
+           if (zones[x].bypass && !partitionStates[zones[x].partition].previousLightState.bypass) {
+            zones[x].bypass=false;  
+           } 
+           
+           if (zones[x].alarm && !partitionStates[zones[x].partition].previousLightState.alarm) {
+            zones[x].alarm=false;  
+           }             
+            
+          if (!zones[x].bypass && zones[x].open && (millis() - zones[x].time) > TTL ) {
+            zones[x].open=false;              
+            zoneStatusUpdate(x);
           }
+     
+           if ( forceRefreshZones) {
+             zoneStatusUpdate(x);
+           }
 
-          if (zones[x].state == zalarm) {
+            
+          if (zones[x].open) {
+            sprintf(s1, "OP:%d", x);              
+            if (zoneStatusMsg != "") zoneStatusMsg.append(",");
+            zoneStatusMsg.append(s1);
+          } 
+          if (zones[x].alarm) {
             sprintf(s1, "AL:%d", x);
             if (zoneStatusMsg != "") zoneStatusMsg.append(",");
             zoneStatusMsg.append(s1);
-          }
-          if (zones[x].state == zbypass) {
+          } 
+          if (zones[x].bypass) {
             sprintf(s1, "BY:%d", x);
             if (zoneStatusMsg != "") zoneStatusMsg.append(",");
             zoneStatusMsg.append(s1);
           }
 
         }
-        if (zoneStatusMsg != previousZoneStatusMsg && zoneExtendedStatusCallback != NULL)
+        if ((zoneStatusMsg != previousZoneStatusMsg  || forceRefreshZones) && zoneExtendedStatusCallback != NULL)
           zoneExtendedStatusCallback(zoneStatusMsg);
         previousZoneStatusMsg = zoneStatusMsg;
 
@@ -1154,10 +1289,13 @@ namespace esphome {
           refreshRfTime = millis();
         }        
         firstRun = false;
+        forceRefreshZones=false;
+        forceRefreshGlobal=false;
       }
 
-    }
 
+    }
+private:
     const __FlashStringHelper * statusText(int statusCode) {
       switch (statusCode) {
 
@@ -1836,4 +1974,9 @@ namespace esphome {
       }
     }
   };
-}
+
+#if !defined(ARDUINO_MQTT)
+vistaECPHome * VistaECP;
+#endif
+
+#endif

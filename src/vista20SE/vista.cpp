@@ -29,6 +29,7 @@ Vista::Vista(Stream * stream) {
     inbufIdx = 0;
     outbufIdx = 0;
     rxState = sSyncInit;
+   // rxState=sPolling;
     pointerToVistaClass = this;
     cbuf = (char * ) malloc(szCbuf);
     outbuf = (char * ) malloc(szOutbuf);
@@ -278,11 +279,8 @@ void Vista::onLrr(char cbuf[], int * idx) {
 }
 
 void Vista::setExpFault(int zone, bool fault) {
-    //expander address 7 - zones: 9 - 16
-    //expander address 8 - zones:  17 - 24
-    //expander address 9 - zones: 25 - 323
-    //expander address 10 - zones: 33 - 40
-    //expander address 11 - zones: 41 - 48
+    //expander address 01 - zones: 10 - 17
+
     uint8_t idx = 0;
     expansionAddr = 0;
     for (uint8_t i = 0; i < MAX_MODULES; i++) {
@@ -293,38 +291,7 @@ void Vista::setExpFault(int zone, bool fault) {
                 expansionAddr = zoneExpanders[i].expansionAddr;
             }
             break;            
-        case 7:
-            if (zone > 8 && zone < 17) {
-                idx = i;
-                expansionAddr = zoneExpanders[i].expansionAddr;
-            }
-            break;
-        case 8:
-            if (zone > 16 && zone < 25) {
-                idx = i;
-                expansionAddr = zoneExpanders[i].expansionAddr;
-            }
-            break;
-        case 9:
-            if (zone > 24 && zone < 33) {
-                idx = i;
-                expansionAddr = zoneExpanders[i].expansionAddr;
-            }
-            break;
-
-        case 10:
-            if (zone > 32 && zone < 41) {
-                idx = i;
-                expansionAddr = zoneExpanders[i].expansionAddr;
-            }
-            break;
-
-        case 11:
-            if (zone > 40 && zone < 49) {
-                idx = i;
-                expansionAddr = zoneExpanders[i].expansionAddr;
-            }
-            break;
+ 
         default:
             break;
         }
@@ -419,12 +386,18 @@ void Vista::onExp(char cbuf[]) {
     sending = false;
 }
 
+void Vista::write(const char key, int addr) {
+    write(key);
+}
+
 void Vista::write(const char key) {
 
     if ((key >= 0x30 && key <= 0x39) || key == 0x23 || key == 0x2a || (key >= 0x41 && key <= 0x44))
         outQueue(key);
 }
-
+void Vista::write(const char * receivedKeys,int addr) {
+        write(receivedKeys);
+}
 void Vista::write(const char * receivedKeys) {
     char key1 = receivedKeys[1];
     char key2 = receivedKeys[2];
@@ -518,8 +491,8 @@ void Vista::writeChars() {
             
             
             
-                int t=4 - (millis() - lowTime);
-                if (t> 0) delay(t);
+                int t=4000 - (micros() - lowTime);
+                if (t> 0) delayMicroseconds(t);
 
   
                   vistaSerial -> setConfig(2400, SWSERIAL_5N1);
@@ -532,34 +505,41 @@ void Vista::writeChars() {
 }
 
 
-
 void ICACHE_RAM_ATTR Vista::rxHandleISR() {
     static byte b;
    
     if (digitalRead(rxPin)) {
-        highTime=millis();
-        lowTime=millis() - lowTime;
+        highTime=micros();
+        if (lowTime)
+            lowTime=micros() - lowTime;
         
-        if ((rxState==sCmdData  || rxState==sCmdDataHigh)&& lowTime > 10) {
-                //shortSync=true;
+        if (rxState==sCmdData) {
+            if (lowTime > 10000) {
                 rxState=sSyncHigh;
-                syncTime=millis();                
-                return;
-          }
+                syncTime=micros(); 
+                markPulse=2;
+            } else if (lowTime > 4600) {
+                   rxState=sCmdHigh;
+                   is2400=true;
+                   markPulse=2;
+             }
+
+        }
         
         if (rxState==sSyncInit) {
 
-            if (lowTime > 9) {
+            if (lowTime > 9000) {
                 rxState=sSyncHigh;
-                syncTime=millis();  
-                return;                
-            }  else if (lowTime > 5) {
+                syncTime=micros();  
+                markPulse=2;
+            }  else if (lowTime > 4600) {
                     rxState=sCmdHigh;
                     is2400=true;
-                    return;                     
-            } else {
-                    rxState=sCmdDataHigh;
+                    markPulse=2;
+            } else if (lowTime > 3000) {
+                    rxState=sCmdData;
                     is2400=false;
+                    markPulse=2;
             }
 
         }                
@@ -567,85 +547,85 @@ void ICACHE_RAM_ATTR Vista::rxHandleISR() {
         
         if (rxState==sSyncLow) {
 
-            if (lowTime > 9) {
-                syncTime=millis();
+            if (lowTime > 9000) {
+                syncTime=micros();
                 rxState=sSyncHigh;
                 expanderType currentFault = peekNextFault();
                 if (currentFault.expansionAddr) {
                     ackAddr = currentFault.expansionAddr; // use the expander address 01 as the requestor
                     vistaSerial -> write(addrToBitmask1(ackAddr), false,4800); //send byte 1 address mask
                 }
-                return;
-            } else if (lowTime > 5) {
+                markPulse=2;
+              } else if (lowTime > 4600 ) {
                 rxState=sCmdHigh;
                 shortSync=false;
                 is2400=true;
-                return;  
-            } else {
+                markPulse=2;
+            } else if (lowTime > 3000)  {
                 shortSync=false;
-                rxState=sCmdDataHigh;
+                rxState=sCmdData;
                 is2400=false;
+                markPulse=2;
             }
           
         }
-        if (rxState==sCmdLow) {
+        if (rxState==sCmdLow ) {
 
-            if ( lowTime < 10)
-                if (lowTime > 5) {
+            if ( lowTime < 10000) {
+                if (lowTime > 4600) {
                    rxState=sCmdHigh;
                    is2400=true;
-                   return;
-                } else { //no cmdhigh pulse so we are getting a cmd at 4800 baud
-                    rxState=sCmdDataHigh;
+                    markPulse=2;                   
+                } else if (lowTime > 3000) { //no cmdhigh pulse so we are getting a cmd at 4800 baud
+                    rxState=sCmdData;
                     is2400=false;
-                }
-            else {
-                    if (millis() - syncTime < 90)
+                }   markPulse=2;
+            }  else {
+                    if (micros() - syncTime < 90000)
                         shortSync=true;
-                    syncTime=millis();
+                    syncTime=micros();
                     rxState=sSyncHigh; 
-                    return;
-                }
-                
+                    markPulse=2;                    
+                 }
+ 
           
         }
 
-
+      lowTime=0;
     } else {
-        lowTime = millis();
-        highTime=millis() - highTime;
+        lowTime = micros();
+        if (highTime) 
+            highTime=micros() - highTime;
         
         if (rxState==sSyncInit) {
-            if (highTime > 40 ) {
+            if (highTime > 40000 ) {
                 rxState=sCmdLow;
             }
         }
       
       
-        if ((rxState==sCmdData  || rxState==sCmdDataHigh) && highTime > 10) {
-            if (millis() - syncTime < 175 ) {
+        if (rxState==sCmdData   && highTime > 10000) {
+            if (micros() - syncTime < 175000 ) {
                 rxState=sCmdLow;
             } else {
                 okToSend=true;
                 rxState=sSyncLow;
-                markPulse=1;
             }
             
         }
 
 
         if (rxState==sSyncHigh) {
-            if (millis() - syncTime < 175 && !shortSync ) {
+            if (micros() - syncTime < 175000 && !shortSync ) {
                 rxState=sCmdLow; 
             } else {
                 rxState=sSyncLow;
                 okToSend=true;
-                markPulse=1;                
             }
 
         }   
         if (rxState==sCmdHigh) {
-            if ( highTime < 10) {
+            if ( highTime < 10000) {
                 rxState=sCmdData;
             }  else {
                 rxState=sCmdLow;
@@ -654,9 +634,10 @@ void ICACHE_RAM_ATTR Vista::rxHandleISR() {
 
         }
   
-
+      highTime=0;
     }
-    vistaSerial -> rxRead(vistaSerial);
+    if (rxState==sCmdData || highTime==0)
+        vistaSerial -> rxRead(vistaSerial);
 
     #ifndef ESP32
     //clear pending interrupts for this pin if any occur during transmission
@@ -665,14 +646,14 @@ void ICACHE_RAM_ATTR Vista::rxHandleISR() {
 }
 
 
-
 #ifdef MONITORTX
 void ICACHE_RAM_ATTR Vista::txHandleISR() {
-    if ((!sending || !filterOwnTx) && rxState!=sSyncLow && (millis() - syncTime > 10)  )
+    if ((!sending || !filterOwnTx) && rxState!=sSyncLow && (micros() - syncTime > 10000)  )
         vistaSerialMonitor -> rxRead(vistaSerialMonitor);
 
 }
 #endif
+
 
 bool Vista::validChksum(char cbuf[], int start, int len) {
     uint16_t chksum = 0;
@@ -810,7 +791,7 @@ bool Vista::decodePacket() {
         if (n_rf_bytes == 5) { // For monitoring, we only care about 5 byte messages since that contains data about sensors
             // Verify data 
             uint16_t rf_checksum = 0;
-            for (uint8_t i = 1; i <= n_rf_bytes + 1; i++) {
+            for (uint8_t i = 0; i < n_rf_bytes + 2; i++) {
                 rf_checksum += extbuf[i];
             }
             if (rf_checksum % 256 == 0) {
@@ -841,7 +822,7 @@ bool Vista::decodePacket() {
                 // device_serial += extbuf[3] << 8;
                 // device_serial += extbuf[4];
             }
-            //  #ifdef DEBUG
+            
             else {
                 // also print if chksum fails
                 extcmd[0] = extbuf[0];
@@ -856,7 +837,7 @@ bool Vista::decodePacket() {
                 return 1;
                 // outStream->println("RF Checksum failed.");
             }
-            //  #endif
+
 
         } else {
             // FB packet but with different length then 5
@@ -884,26 +865,29 @@ bool Vista::decodePacket() {
 #endif
 #ifdef MONITORTX
 bool Vista::getExtBytes() {
-    uint8_t x;
-    bool ret = 0;
+  uint8_t x;
+  bool ret = 0;
 
-    if (!validMonitorPin) return 0;
-    while (vistaSerialMonitor -> available()  ) {
-        x = vistaSerialMonitor -> read();
-        if (extidx < szExt)
-            extbuf[extidx++] = x;
-        markPulse = 0; //reset pulse flag to wait for next inter msg gap
-    }
+  if (!validMonitorPin) return 0;
 
-    if (extidx > 0) {
-        //ok, we are on the next pulse (gap) , lets decode the previous msg data
-        if (decodePacket())
-            ret = 1;
-        extidx = 0;
-        memset(extbuf, 0, szExt);
-    }
+  while (vistaSerialMonitor -> available()) {
+    x = vistaSerialMonitor -> read();
 
-    return ret;
+    if (extidx < szExt)
+      extbuf[extidx++] = x;
+    markPulse = 0; //reset pulse flag to wait for next inter msg gap
+  }
+
+  if (extidx > 0 && markPulse > 1) {
+    //ok, we are on the next pulse (gap) , lets decode the previous msg data
+    if (decodePacket())
+      ret = 1;
+    extidx = 0;
+    memset(extbuf, 0, szExt); //clear buffer mem    
+
+  }
+
+  return ret;
 }
 #endif
 
@@ -913,9 +897,11 @@ bool Vista::handle() {
     #ifdef MONITORTX
     if (getExtBytes()) return 1;
     #endif
-    if (rxState==sSyncLow && (millis() - lowTime < 5 ) && okToSend && charAvail()) {
-        writeChars();
+    
+    if (rxState==sSyncLow &&  (micros() - lowTime < 5000 ) && okToSend && charAvail()) {
+       writeChars();
     }   
+
 
     if (is2400)
         vistaSerial->setBaud(2400);
@@ -928,14 +914,11 @@ bool Vista::handle() {
 
         x = vistaSerial->read();
 
-        //we need to skips initial zero's here since the RX line going back high after a command, can create a bogus character
+     memset(cbuf, 0, szCbuf); //clear buffer mem
 
-       if (!x && rxState != sCmdData)
-                    return 0;
-
-
-        memset(cbuf, 0, szCbuf); //clear buffer mem
-       bool ret=0;
+        if (markPulse==1) return 0;
+        
+        markPulse=1;
         if (expectByte != 0) {
             if (x != expectByte) {
                 onResponseError(x);
@@ -974,7 +957,6 @@ bool Vista::handle() {
             memset(extcmd, 0, szExt); //store the previous panel sent data in extcmd buffer for later use
             memcpy(extcmd, cbuf, 6);
             #endif
-         
             return 1;
         }
 
@@ -984,17 +966,27 @@ bool Vista::handle() {
             promptIdx=0;
             newCmd = false;
             gidx = 0;
-            cbuf[gidx++] = x;
+            cbuf[gidx++] = 0xF1; //testing 
             readChars(4, cbuf, & gidx, 5);
             statusFlags.backlight = ((cbuf[1] & 0x80) > 0);
             cbuf[1] = (cbuf[1] & 0x7F);
             for (int x=1;x<5;x++) {
                 tempPrompt[promptIdx++]=cbuf[x];
             }
+            #ifdef DEBUG
+            newCmd=true;
+            return 1;
+            #else
             return 0;
+            #endif
         }
         
         if (x == 0xFF ) {
+            #ifdef DEBUG
+            bool ret=1;
+            #else
+            bool ret=0;
+            #endif
             vistaSerial->setBaud(2400);
             gidx = 0;
             cbuf[gidx++] = x;
@@ -1005,7 +997,7 @@ bool Vista::handle() {
             if (promptIdx ==32) {
                 int y=0;
                 for (int x = 0;x < 32; x++) {
-                    if ((uint8_t) tempPrompt[x] > 31 ) {
+                    if ((uint8_t) tempPrompt[x] > 31 && (uint8_t)tempPrompt[x] < 127) {
                         statusFlags.prompt[y++] = tempPrompt[x];
                     } else   statusFlags.prompt[y++] = ' ';
                 }
@@ -1013,9 +1005,11 @@ bool Vista::handle() {
                 promptIdx=0;
                 cbuf[0]=0xFE;
                 newCmd=true;
-   
-               ret = 1;
+                ret = 1;
             }
+            #ifdef DEBUG
+            newCmd=true;
+            #endif
             return ret;
         }
         
@@ -1027,12 +1021,12 @@ bool Vista::handle() {
             readChars(32, cbuf, & gidx, 32);
             int y=0;
             for (int x = 1;x < 33; x++) {
-                if ((uint8_t)cbuf[x] ) {
+                if ((uint8_t)cbuf[x] && (uint8_t)cbuf[x] < 127) {
                     statusFlags.prompt[y++] = cbuf[x];
                 } else y++;
             }
             statusFlags.prompt[y]='\0';
-            return 1;
+            return 0;
         }
 
         //RF supervision
@@ -1041,7 +1035,7 @@ bool Vista::handle() {
             newCmd = true;
             gidx = 0;
             cbuf[gidx++] = x;
-            readChars(4, cbuf, & gidx, 8);
+            readChars(4, cbuf, & gidx, 4);
             if (!validChksum(cbuf, 0, gidx)) 
                 cbuf[12]=0x77;
             #ifdef MONITORTX
@@ -1057,7 +1051,13 @@ bool Vista::handle() {
             newCmd = true;
             gidx = 0;
             cbuf[gidx++] = x;
-            readChars(7, cbuf, & gidx, 8);
+            readChars(6, cbuf, & gidx, 8);\
+            if (!validChksum(cbuf, 0, gidx)) 
+                cbuf[12]=0x77;            
+            #ifdef MONITORTX
+            memset(extcmd, 0, szExt); //store the previous panel sent data in extcmd buffer for later use
+            memcpy(extcmd, cbuf, 8);
+            #endif            
             return 1;
         }
         
@@ -1082,14 +1082,29 @@ bool Vista::handle() {
             #endif
             return 1;
         }
-
+        
+        //unknown
+        if (x == 0xF0) {
+            vistaSerial -> setBaud(4800);
+            newCmd = true;
+            gidx = 0;
+            cbuf[gidx++] = x;
+            readChar(cbuf, & gidx);
+            #ifdef MONITORTX
+            memset(extcmd, 0, szExt); //store the previous panel sent data in extcmd buffer for later use
+            memcpy(extcmd, cbuf, 2);
+            #endif            
+            return 1;
+        }  
+        
          if (x >=0 && x <0xf0 ) { //assume it's a status cmd
             vistaSerial->setBaud(2400);
             newCmd = true;
             gidx = 0;
-            cbuf[gidx++] = x;
-            readChars(3, cbuf, & gidx, 5);
+            cbuf[gidx++]=x;
+            readChars(STATUSCMDBYTES, cbuf, & gidx, 5);
             processStatus(cbuf, & gidx);
+            promptIdx=0;
             return 1;
         }
 

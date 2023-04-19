@@ -1,10 +1,10 @@
 #for documentation see project at https://github.com/Dilbert66/esphome-VistaECP
 substitutions:
-  systemName: "vistaalarm"
+  systemName: "vistaalarmSE"
   accessCode: !secret access_code #Only comes into effect if needed for arming and quickarm is not set
 
-  maxZones: "48" #maximum amount of zones that your panel supports
-  maxPartitions: "3" #maximum amount of partitions that your panel supports
+  maxZones: "38" #maximum amount of zones that your panel supports
+  maxPartitions: "1" #maximum amount of partitions that your panel supports
   
   rfSerialLookup: "0123456:10:80,0123457:11:80" # list of RF serial numbers with associated zone and bitmask. 
   #Format: "serial1#:zone1:mask1,serial2#:zone2:mask2" 
@@ -12,15 +12,12 @@ substitutions:
   
   defaultPartition: "1" 
    
-  # Assign a new virtual keypad address to each active partition that you wish to monitor  using programs *190 - *196 #and enter it below.  For unused partitions, use 0 as the keypad address.
-  keypadAddr1: "17" #partition 1 virtual keyapd
-  keypadAddr2: "0" #partition 2 virtual keypad. set to 0 to disable
-  keypadAddr3: "0" #partition 3 virtual keypad. set to 0 to disable
+  keypadAddr1: "31" #partition 1 virtual keyapd
   
   ##esp32
   rxPin: "22" #GPIO pin to use for data receive (yellow line) 
   txPin: "21" #GPIO pin to use for data transmit (green line)
-  monitorPin: "18" #GPIO pin to use for monitoring module traffic such as RF or Expanders . Set to -1 to disable
+  monitorPin: "18" 
 
   ##esp8266
   #rxPin: "5" #GPIO pin to use for data receive (yellow line) 
@@ -28,22 +25,11 @@ substitutions:
   #monitorPin: "14" #GPIO pin to use for monitoring module traffic such as RF or Expanders . Set to -1 to disable
   
   # module addresses:
-  # 07 4229/4219 zone expander  zones 9-16
-  # 08 4229/4219 zone expander zones 17-24
-  # 09 4229/4219 zone expander zones 25-32
-  # 10 4229/4219 zone expander zones 33-40
-  # 11 4229/4219 zone expander zones 41 48
-  # 12 4204 relay module  
-  # 13 4204 relay module
-  # 14 4204 relay module
-  # 15 4204 relay module
-  expanderAddr1: "0" # 1st zone expander emulator (4229) address to use . Set to 0 to disable. 
-  expanderAddr2: "0" # 2nd expander emulator address to use . Set to 0 to disable. 
-  
+  # 01 4229/4219 zone expander  zones 17-24
+  # 0 - 3 4204 relay module  
+
+  expanderAddr1: "1" # 1st zone expander emulator (4229) address to use . Set to 0 to disable. 
   relayAddr1: "0" # relay module emulation (4204) addresses. Set to 0 to disable
-  relayAddr2: "0"
-  relayAddr3: "0"
-  relayAddr4: "0"
   
   TTL: "30000"  # time  to live  in ms for zone/fire status before expiring;
   quickArm: "false"
@@ -58,7 +44,7 @@ esphome:
 
   # subdirectory where library *.h and *.cpp are placed 
   includes:
-    - vistaEcpInterface/
+    - vistaEcpInterfaceSE/
 
 wifi:
   ssid: !secret wifi_ssid
@@ -100,19 +86,12 @@ custom_component:
 - lambda: |-
     auto VistaECP = new vistaECPHome($keypadAddr1,$rxPin,$txPin,$monitorPin,$maxZones,$maxPartitions);
     VistaECP->defaultPartition=$defaultPartition;    
-    VistaECP->partitionKeypads[1]=$keypadAddr1;
-    VistaECP->partitionKeypads[2]=$keypadAddr2;
-    VistaECP->partitionKeypads[3]=$keypadAddr3;
     VistaECP->rfSerialLookup="$rfSerialLookup"; 
     VistaECP->defaultPartition=$defaultPartition;
     VistaECP->accessCode="$accessCode";
     VistaECP->quickArm=$quickArm;
     VistaECP->expanderAddr1=$expanderAddr1; //zone expander
-    VistaECP->expanderAddr2=$expanderAddr2;
     VistaECP->relayAddr1=$relayAddr1; //relay module 
-    VistaECP->relayAddr2=$relayAddr2;
-    VistaECP->relayAddr3=$relayAddr3; 
-    VistaECP->relayAddr4=$relayAddr4;     
     VistaECP->lrrSupervisor=$lrrSupervisor;
     VistaECP->TTL=$TTL;
     VistaECP->debug=1;
@@ -196,6 +175,7 @@ custom_component:
         case 7: id(z7).publish_state(open); break;
         case 8: id(z8).publish_state(open); break;
         case 10: id(z10).publish_state(open); break;
+        case 16: id(z16).publish_state(open); break;        
         case 17: id(z17).publish_state(open); break;
         case 18: id(z18).publish_state(open); break;
         default: break; 
@@ -204,17 +184,16 @@ custom_component:
    
     VistaECP->onRelayStatusChange([&](uint8_t addr,int zone,bool open) {
      switch(addr) {
-     case 12: switch (zone) {
+     case 02: switch (zone) {
                 case 1: id(r1).publish_state(open); break;
                 case 2: id(r2).publish_state(open); break;
               }
               break;
-     case 8: switch (zone) {
+     case3: switch (zone) {
                 case 1: id(r1).publish_state(open); break;
                 case 2: id(r2).publish_state(open); break;
               }
               break;              
-      case 13: break;
       default: break;
       }
     });  //add as many case and switch statements as needed to control your binary sensor outputs      
@@ -349,8 +328,14 @@ binary_sensor:
 
   - platform: template
     id: z10
-    name: "$systemName Basement windows"
+    name: "$systemName zone 10"
     device_class: window  
+
+
+  - platform: template
+    id: z16
+    name: "$systemName zone 16"
+    device_class: window      
 
   - platform: template
     id: z17

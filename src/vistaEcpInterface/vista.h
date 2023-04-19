@@ -5,10 +5,6 @@
 
 #include "ECPSoftwareSerial.h"
 
-#ifdef ESP32
-#define ICACHE_RAM_ATTR IRAM_ATTR
-#endif
-
 //#define DEBUG
 
 #define MONITORTX
@@ -36,7 +32,7 @@
 #define BIT_MASK_BYTE3_IN_ALARM 0x01
 
 #define F7_MESSAGE_LENGTH 45
-#define F8_MESSAGE_LENGTH 9
+#define F8_MESSAGE_LENGTH 7
 #define N98_MESSAGE_LENGTH 6
 
 #define MAX_MODULES 9
@@ -81,14 +77,14 @@ struct statusFlagType {
     bool fault;
     bool panicAlarm;
     char keypad[4];
-    uint8_t zone;
+    int zone;
     char prompt[36];
     char promptPos;
     uint8_t attempts = 10;
     struct {
         int code;
         uint8_t qual;
-        uint8_t zone;
+        int zone;
         uint8_t user;
         uint8_t partition;
     }
@@ -116,7 +112,6 @@ class Vista {
     void begin(int receivePin, int transmitPin, char keypadAddr, int monitorTxPin);
     void stop();
     bool handle();
-    void outQueue(char byt,uint8_t addr);
     void printStatus();
     void printTrouble();
     void decodeBeeps();
@@ -129,11 +124,11 @@ class Vista {
     statusFlagType statusFlags;
     SoftwareSerial * vistaSerial, * vistaSerialMonitor;
     void setKpAddr(char keypadAddr) {
-        if (kpAddr > 0)
+        if (keypadAddr > 0)
             kpAddr = keypadAddr;
     }
     bool dataReceived;
-    void ICACHE_RAM_ATTR rxHandleISR(), txHandleISR();
+    void IRAM_ATTR rxHandleISR(), txHandleISR();
     bool areEqual(char * , char * , uint8_t);
     bool keybusConnected;
     int toDec(int);
@@ -161,7 +156,7 @@ class Vista {
     volatile char ackAddr;
     Stream * outStream;
     volatile char rxState;
-    volatile unsigned long lowTime;
+    volatile unsigned long lowTime,highTime;
     uint8_t * faultQueue;
     void setNextFault(uint8_t);
     expanderType getNextFault();
@@ -193,16 +188,16 @@ class Vista {
     volatile bool is2400;
     bool validMonitorPin;
 
-    char ICACHE_RAM_ATTR addrToBitmask1(char addr) {
+    char IRAM_ATTR addrToBitmask1(char addr) {
         if (addr > 7) return 0xFF;
         else return 0xFF ^ (0x01 << (addr));
     }
-    char ICACHE_RAM_ATTR addrToBitmask2(char addr) {
+    char IRAM_ATTR addrToBitmask2(char addr) {
         if (addr < 8) return 0;
         else if (addr > 16) return 0xFF;
         else return 0xFF ^ (0x01 << (addr - 8));
     }
-    char ICACHE_RAM_ATTR addrToBitmask3(char addr) {
+    char IRAM_ATTR addrToBitmask3(char addr) {
         if (addr < 16) return 0;
         else return 0xFF ^ (0x01 << (addr - 16));
     }
